@@ -15,7 +15,7 @@ using Object = UnityEngine.Object;
 
 namespace AidanamitesDevMod
 {
-    [BepInPlugin("com.aidanamite.AidanamitesDevMod", "AidanamitesDevMod", "1.0.0")]
+    [BepInPlugin("com.aidanamite.AidanamitesDevMod", "AidanamitesDevMod", "1.1.0")]
     [BepInDependency("com.aidanamite.ConfigTweaks")]
     public class Main : BaseUnityPlugin
     {
@@ -27,53 +27,118 @@ namespace AidanamitesDevMod
         {
             if (Input.GetKeyDown(KeyCode.Keypad0) && SanctuaryManager.pCurPetInstance)
             {
-                var l = new List<UserItemData>();
+                Logger.LogInfo("Starting render resource load");
+                var l = new Dictionary<UserItemData, GameObject>();
                 foreach (var i in CommonInventoryData.pInstance.GetItems(Category.DragonSkin))
-                    if (i?.Item?.AssetName != null && i.Item.ItemID >= 1000000 && i.Item.GetAttribute("PetTypeID", -1) == SanctuaryManager.pCurPetInstance.pData.PetTypeID)
-                        l.Add(i);
-                var t = RenderingTools.RenderImages(SanctuaryManager.pCurPetInstance.gameObject, l.Select(x =>
-                    new RenderingTools.RenderConfig(1024, 1024, Camera.main.transform.rotation)
-                    {
-                        ambientLight = Color.white,
-                        complexTransparencyDetection = true,
-                        orthographic = false
-                        ,renderHeightOverride = 50
-                        ,BeforeRender = (y) =>
+                    if (!string.IsNullOrEmpty(i?.Item?.AssetName) && i.Item.ItemID >= 100000 && i.Item.GetAttribute("PetTypeID", -1) == SanctuaryManager.pCurPetInstance.pData.PetTypeID && !l.ContainsKey(i))
+                        l[i] = RsResourceManager.LoadAssetFromBundle(i.Item.AssetName, typeof(GameObject)) as GameObject;
+                {
+                    var t = RenderingTools.RenderImages(SanctuaryManager.pCurPetInstance.gameObject, l.Where(x => x.Value).Select(x =>
+                        new RenderingTools.RenderConfig(1024, 1024, Camera.main.transform.rotation)
                         {
-                            y.GetComponent<SanctuaryPet>().pData.SetAccessory(RaisedPetAccType.Materials, x.Item.AssetName, "", x);
-                            y.GetComponent<SanctuaryPet>().UpdateAccessories(false);
-                            foreach (var i in y.GetComponentsInChildren<Renderer>(true))
-                                if (i)
-                                {
-                                    if (i.name == "RotationPivot" || i is TrailRenderer || (i is SkinnedMeshRenderer skin2 && (!skin2.sharedMesh || !skin2.enabled)))
+                            ambientLight = Color.white,
+                            complexTransparencyDetection = true,
+                            orthographic = false,
+                            renderHeightOverride = 50,
+                            BeforeRender = (y) =>
+                            {
+                                Logger.LogInfo($"Attempting to render {x.Key.Item.ItemName} >> {x.Value}");
+                                y.GetComponent<SanctuaryPet>().SetAccessory(RaisedPetAccType.Materials, Instantiate(x.Value), null);
+                                foreach (var i in y.GetComponentsInChildren<Renderer>(true))
+                                    if (i)
                                     {
-                                        Logger.LogInfo($"Destroying: {i} - {i.bounds}");
-                                        if (i.name == "RotationPivot")
-                                            DestroyImmediate(i.gameObject);
+                                        if (i.name == "RotationPivot" || i is TrailRenderer)
+                                        {
+                                            Logger.LogInfo($"Destroying: {i} - {i.bounds}");
+                                            if (i.name == "RotationPivot")
+                                                DestroyImmediate(i.gameObject);
+                                            else
+                                                DestroyImmediate(i);
+                                        }
                                         else
-                                            DestroyImmediate(i);
+                                        {
+                                            if (i is SkinnedMeshRenderer skin)
+                                            {
+                                                if (!skin.sharedMesh || !skin.enabled)
+                                                {
+                                                    skin.gameObject.SetActive(false);
+                                                    Logger.LogInfo($"Hiding: {i} - {i.bounds}");
+                                                }
+                                                else
+                                                {
+                                                    skin.updateWhenOffscreen = true;
+                                                    Logger.LogInfo($"Keeping: {i} - {i.bounds}");
+                                                }
+                                            }
+                                            else
+                                                Logger.LogInfo($"Keeping: {i} - {i.bounds}");
+                                        }
                                     }
-                                    else
-                                    {
-                                        if (i is SkinnedMeshRenderer skin)
-                                            skin.updateWhenOffscreen = true;
-                                        Logger.LogInfo($"Not Destroying: {i} - {i.bounds}");
-                                    }
-                                }
+                            }
+                        }).ToArray(),
+                        out var e, lightingMode: RenderingTools.LightingMode.IgnoreAllLights, cameraBufferDistance: 1, renderLayer: 31);
+                    for (int i = 0; i < t.Length; i++)
+                        if (t[i])
+                        {
+                            if (!Directory.Exists("Renders"))
+                                Directory.CreateDirectory("Renders");
+                            File.WriteAllBytes($"Renders/Img-{DateTime.UtcNow.Ticks}.png", t[i].EncodeToPNG());
                         }
-                    }).ToArray(),
-                    out var e, lightingMode: RenderingTools.LightingMode.IgnoreAllLights, cameraBufferDistance: 1,renderLayer: 31);
-                for (int i = 0; i < t.Length; i++)
-                    if (t[i])
-                    {
-                        if (!Directory.Exists("Renders"))
-                            Directory.CreateDirectory("Renders");
-                        File.WriteAllBytes($"Renders/Img-{DateTime.UtcNow.Ticks}.png", t[i].EncodeToPNG());
-                    }
-                    else
-                    {
-                        Logger.LogError($"Failed to render image. Reason: {e[i]?.ToString() ?? "Unknown"}");
-                    }
+                        else
+                        {
+                            Logger.LogError($"Failed to render image. Reason: {e[i]?.ToString() ?? "Unknown"}");
+                        }
+                }
+            }
+            else if (Input.GetKeyDown(KeyCode.Keypad1) && SanctuaryManager.pCurPetInstance)
+            {
+                Logger.LogInfo("Starting render resource load");
+                var l = new Dictionary<UserItemData,(GameObject,Texture2D)>();
+                foreach (var i in CommonInventoryData.pInstance.GetItems(Category.DragonSaddles))
+                    if (!string.IsNullOrEmpty(i?.Item?.AssetName) && i.Item.Texture?.Length >= 1 && i.Item.ItemID >= 100000 && i.Item.GetAttribute("PetTypeID", -1) == SanctuaryManager.pCurPetInstance.pData.PetTypeID && !l.ContainsKey(i))
+                        l.Add(i,(RsResourceManager.LoadAssetFromBundle(i.Item.AssetName, typeof(GameObject)) as GameObject, RsResourceManager.LoadAssetFromBundle(i.Item.Texture[0].TextureName, typeof(Texture2D)) as Texture2D));
+                {
+                    var t = RenderingTools.RenderImages(SanctuaryManager.pCurPetInstance.gameObject, l.Where(x => x.Value.Item1 && x.Value.Item2).Select(x =>
+                        new RenderingTools.RenderConfig(1024, 1024, Camera.main.transform.rotation)
+                        {
+                            ambientLight = Color.white,
+                            complexTransparencyDetection = true,
+                            orthographic = false,
+                            renderHeightOverride = 50,
+                            BeforeRender = (y) =>
+                            {
+                                Logger.LogInfo($"Attempting to render {x.Key.Item.ItemName} >> {x.Value.Item1}, {x.Value.Item2}");
+                                y.GetComponent<SanctuaryPet>().SetAccessory(RaisedPetAccType.Saddle, Instantiate( x.Value.Item1), Instantiate(x.Value.Item2));
+                                foreach (var i in y.GetComponentsInChildren<Renderer>(true))
+                                    if (i)
+                                    {
+                                        if (!i.name.Contains("Saddle"))
+                                        {
+                                            Logger.LogInfo($"Hiding: {i} - {i.bounds}");
+                                            i.gameObject.SetActive(false);
+                                        }
+                                        else
+                                        {
+                                            if (i is SkinnedMeshRenderer skin)
+                                                    skin.updateWhenOffscreen = true;
+                                                Logger.LogInfo($"Keeping: {i} - {i.bounds}");
+                                        }
+                                    }
+                            }
+                        }).ToArray(),
+                        out var e, lightingMode: RenderingTools.LightingMode.IgnoreAllLights, cameraBufferDistance: 1, renderLayer: 31);
+                    for (int i = 0; i < t.Length; i++)
+                        if (t[i])
+                        {
+                            if (!Directory.Exists("Renders"))
+                                Directory.CreateDirectory("Renders");
+                            File.WriteAllBytes($"Renders/Img-{DateTime.UtcNow.Ticks}.png", t[i].EncodeToPNG());
+                        }
+                        else
+                        {
+                            Logger.LogError($"Failed to render image. Reason: {e[i]?.ToString() ?? "Unknown"}");
+                        }
+                }
             }
         }
     }
@@ -212,8 +277,15 @@ namespace AidanamitesDevMod
                 var keepLights = new HashSet<Light>();
                 if (copyObjectForRender)
                 {
-                    o = Object.Instantiate(o);
+                    var tmp = new GameObject("");
+                    created.Add(tmp);
+                    tmp.SetActive(false);
+                    var oName = o.name;
+                    o = Object.Instantiate(o,tmp.transform);
                     created.Add(o);
+                    o.name = oName;
+                    o.transform.SetParent(null);
+                    Object.Destroy(tmp);
                 }
                 else
                     foreach (var t in o.GetComponentsInChildren<Transform>(true))
